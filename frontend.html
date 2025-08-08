@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TEMA Tasks Viewer</title>
+    
+    <!-- KaTeX для рендеринга LaTeX -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css" integrity="sha384-GvrOXuhMATgEsSwCs4smul74iXGOixntILdUW9XmUC6+HX0sLNAK3q71HotJqlAn" crossorigin="anonymous">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js" integrity="sha384-cpW21h6RZv/phavutF+AuVYrr+dA8xD9zs6FwLpaCct6O9ctzYFfFr4dgmgccOTx" crossorigin="anonymous"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" integrity="sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05" crossorigin="anonymous"></script>
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Font Awesome для иконок -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            min-height: 100vh;
+        }
+        
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            padding: 1rem;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 2rem auto;
+            padding: 1rem;
+        }
+        
+        .task-card {
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 12px;
+            margin-bottom: 1.5rem;
+            padding: 1.5rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+        }
+        
+        .task-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+        }
+        
+        .task-header {
+            border-bottom: 1px solid #e0e0e0;
+            padding-bottom: 1rem;
+            margin-bottom: 1rem;
+        }
+        
+        .task-content {
+            font-size: 1.1rem;
+            line-height: 1.6;
+        }
+        
+        .math-content {
+            margin-bottom: 1rem;
+        }
+        
+        .tag {
+            display: inline-block;
+            background-color: #e9ecef;
+            color: #495057;
+            padding: 0.3em 0.6em;
+            border-radius: 12px;
+            font-size: 0.85em;
+            margin-right: 0.5em;
+            margin-top: 0.5em;
+        }
+        
+        .difficulty-A { background-color: #d4edda; color: #155724; }
+        .difficulty-B { background-color: #fff3cd; color: #856404; }
+        .difficulty-C { background-color: #f8d7da; color: #721c24; }
+        
+        .task-type-extracted { border-left: 5px solid #0d6efd; }
+        .task-type-generated { border-left: 5px solid #6f42c1; }
+        
+        .stats-card {
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 12px;
+            padding: 1.5rem;
+            text-align: center;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        
+        .stats-card h3 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #333;
+        }
+        
+        .stats-card p {
+            font-size: 1rem;
+            color: #666;
+        }
+        
+        .debug-toggle {
+            background: #6c757d;
+            color: white;
+            border: none;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            cursor: pointer;
+        }
+        
+        .debug-toggle:hover {
+            background: #5a6268;
+        }
+        
+        .raw-text {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 0.75rem;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            margin-top: 0.5rem;
+            display: none;
+        }
+        
+        .formatted-text {
+            margin-top: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="loadingIndicator">
+        <i class="fas fa-spinner fa-spin"></i> Загрузка...
+    </div>
+
+    <header class="header">
+        <div class="container-fluid d-flex justify-content-between align-items-center">
+            <h1 class="h4 mb-0 text-dark">
+                <i class="fas fa-tasks me-2"></i>TEMA Tasks Viewer
+            </h1>
+            <div class="d-flex align-items-center">
+                <button id="debugToggle" class="debug-toggle me-3">Показать исходный текст</button>
+                <select id="fileSelect" class="form-select me-3" style="width: auto;"></select>
+                <input type="text" id="searchBox" class="form-control me-3" placeholder="Поиск по тексту..." style="width: 250px;">
+                <button id="resetFilters" class="btn btn-outline-secondary">Сброс</button>
+            </div>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- Статистика -->
+        <div class="row mb-4" id="statsContainer">
+            <!-- Карточки статистики будут здесь -->
+        </div>
+        
+        <!-- Фильтры -->
+        <div class="row mb-4">
+            <div class="col-md-4">
+                <select id="topicFilter" class="form-select"></select>
+            </div>
+            <div class="col-md-4">
+                <select id="difficultyFilter" class="form-select">
+                    <option value="">Все сложности</option>
+                    <option value="A">A (Простой)</option>
+                    <option value="B">B (Средний)</option>
+                    <option value="C">C (Сложный)</option>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <select id="typeFilter" class="form-select">
+                    <option value="">Все типы</option>
+                    <option value="extracted">Извлеченные</option>
+                    <option value="generated">Сгенерированные</option>
+                </select>
+            </div>
+        </div>
+        
+        <!-- Контейнер для задач -->
+        <div id="tasksContainer"></div>
+    </div>
+
+    <script>
+        // --- Глобальные переменные ---
+        let allTasks = [];
+        let filteredTasks = [];
+        let debugMode = false;
+        const API_BASE_URL = 'http://localhost:5000';
+
+        // --- Элементы DOM ---
+        const fileSelect = document.getElementById('fileSelect');
+        const tasksContainer = document.getElementById('tasksContainer');
+        const topicFilter = document.getElementById('topicFilter');
+        const difficultyFilter = document.getElementById('difficultyFilter');
+        const typeFilter = document.getElementById('typeFilter');
+        const searchBox = document.getElementById('searchBox');
+        const resetFiltersBtn = document.getElementById('resetFilters');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        const debugToggle = document.getElementById('debugToggle');
+
+        // Функция для создания блока с текстом (исходный + форматированный)
+        function createTextBlock(label, rawText, isStrong = false) {
+            if (!rawText) return '';
+            
+            const strongTag = isStrong ? 'strong' : 'span';
+            return `
+                <div class="math-content">
+                    <${strongTag}>${label}:</${strongTag}>
+                    ${debugMode ? `
+                        <button class="debug-toggle" onclick="toggleRawText(this)" style="margin-left: 10px; font-size: 0.7rem;">RAW</button>
+                        <div class="raw-text">${escapeHtml(rawText)}</div>
+                    ` : ''}
+                    <div class="formatted-text">${rawText}</div>
+                </div>
+            `;
+        }
+
+        // Функция для экранирования HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Функция для переключения отображения исходного текста
+        function toggleRawText(button) {
+            const rawTextDiv = button.nextElementSibling;
+            const formattedTextDiv = rawTextDiv.nextElementSibling;
+            
+            if (rawTextDiv.style.display === 'none' || rawTextDiv.style.display === '') {
+                rawTextDiv.style.display = 'block';
+                formattedTextDiv.style.display = 'none';
+                button.textContent = 'FORMATTED';
+            } else {
+                rawTextDiv.style.display = 'none';
+                formattedTextDiv.style.display = 'block';
+                button.textContent = 'RAW';
+            }
+        }
+
+        // Делаем функцию доступной глобально
+        window.toggleRawText = toggleRawText;
+        function toggleLoading(show) {
+            loadingIndicator.style.display = show ? 'block' : 'none';
+        }
+
+        // Загрузка списка файлов
+        async function loadFileList() {
+            toggleLoading(true);
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/files`);
+                if (!response.ok) throw new Error(`HTTP ошибка! Статус: ${response.status}`);
+                const files = await response.json();
+                
+                fileSelect.innerHTML = '<option value="">-- Выберите файл --</option>';
+                files.forEach(file => {
+                    const option = new Option(file, file);
+                    fileSelect.add(option);
+                });
+            } catch (error) {
+                console.error("Ошибка при загрузке списка файлов:", error);
+                fileSelect.innerHTML = '<option value="">-- Ошибка загрузки --</option>';
+            } finally {
+                toggleLoading(false);
+            }
+        }
+
+        // Загрузка задач из файла
+        async function loadTasks() {
+            const filename = fileSelect.value;
+            if (!filename) {
+                tasksContainer.innerHTML = '';
+                allTasks = [];
+                updateFilters();
+                return;
+            }
+            
+            toggleLoading(true);
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/tasks?file=${filename}`);
+                if (!response.ok) throw new Error(`HTTP ошибка! Статус: ${response.status}`);
+                const tasks = await response.json();
+                
+                // Добавляем источник задач
+                allTasks = tasks.map(task => ({
+                    ...task,
+                    source: filename.includes('generated') ? 'generated' : 'extracted'
+                }));
+                
+                applyFilters();
+            } catch (error) {
+                console.error("Ошибка при загрузке задач:", error);
+                tasksContainer.innerHTML = `<div class="alert alert-danger">Ошибка загрузки задач: ${error.message}</div>`;
+            } finally {
+                toggleLoading(false);
+            }
+        }
+
+        // Обновление фильтров на основе загруженных задач
+        function updateFilters() {
+            const topics = [...new Set(allTasks.map(task => task.topic))].sort();
+            topicFilter.innerHTML = '<option value="">Все темы</option>';
+            topics.forEach(topic => {
+                if(topic) {
+                    const option = new Option(topic, topic);
+                    topicFilter.add(option);
+                }
+            });
+        }
+
+        // Применение всех фильтров
+        function applyFilters() {
+            const topic = topicFilter.value;
+            const difficulty = difficultyFilter.value;
+            const type = typeFilter.value;
+            const searchText = searchBox.value.toLowerCase();
+            
+            filteredTasks = allTasks.filter(task => {
+                const matchesTopic = !topic || task.topic === topic;
+                const matchesDifficulty = !difficulty || task.difficulty === difficulty;
+                const matchesType = !type || task.source === type;
+                const matchesSearch = !searchText || 
+                    (task.original && task.original.toLowerCase().includes(searchText)) ||
+                    (task.solution && task.solution.toLowerCase().includes(searchText)) ||
+                    (task.answer && task.answer.toLowerCase().includes(searchText));
+                
+                return matchesTopic && matchesDifficulty && matchesType && matchesSearch;
+            });
+            
+            updateFilters();
+            renderTasks();
+            renderStats();
+        }
+
+        // Рендеринг задач
+        function renderTasks() {
+            tasksContainer.innerHTML = '';
+            if (filteredTasks.length === 0) {
+                tasksContainer.innerHTML = '<div class="alert alert-info">Задачи не найдены по заданным критериям</div>';
+                return;
+            }
+            
+            const fragment = document.createDocumentFragment();
+            filteredTasks.forEach((task, index) => {
+                const sourceClass = task.source === 'generated' ? 'task-type-generated' : 'task-type-extracted';
+                const sourceIcon = task.source === 'generated' ? 'fa-magic' : 'fa-book';
+                const sourceText = task.source === 'generated' ? 'Сгенерировано' : 'Извлечено';
+                
+                const card = document.createElement('div');
+                card.className = `task-card ${sourceClass}`;
+                card.innerHTML = `
+                    <div class="task-header d-flex justify-content-between align-items-center">
+                        <div>
+                            <span class="badge bg-light text-dark me-2">№${task.id || index + 1}</span>
+                            <span class="fw-bold">${task.topic || 'Без темы'}</span>
+                        </div>
+                        <div>
+                            <span class="badge difficulty-${task.difficulty} me-2">${task.difficulty || 'N/A'}</span>
+                            <span class="badge bg-light text-dark">
+                                <i class="fas ${sourceIcon} me-1"></i>${sourceText}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="task-content">
+                        ${createTextBlock('Условие', task.original || task.question || '', true)}
+                        
+                        ${task.solution ? createTextBlock('Решение', task.solution, true) : ''}
+                        
+                        ${task.answer ? createTextBlock('Ответ', task.answer, true) : ''}
+                        
+                        <div class="mt-3">
+                            <small class="text-muted">Теги: </small>
+                            ${(task.tags || []).map(tag => `<span class="tag">${tag}</span>`).join('')}
+                        </div>
+                        
+                        ${task.type ? `<div class="mt-2"><small class="text-muted">Тип: ${task.type}</small></div>` : ''}
+                    </div>
+                `;
+                fragment.appendChild(card);
+            });
+            tasksContainer.appendChild(fragment);
+            
+            // Перерендеринг KaTeX
+            if (window.renderMathInElement) {
+                renderMathInElement(tasksContainer, {
+                    delimiters: [
+                        {left: '$$', right: '$$', display: true},
+                        {left: '$', right: '$', display: false}
+                    ],
+                    throwOnError: false
+                });
+            }
+        }
+        
+        // Рендеринг статистики
+        function renderStats() {
+            const statsContainer = document.getElementById('statsContainer');
+            const total = allTasks.length;
+            const shown = filteredTasks.length;
+            const generated = allTasks.filter(t => t.source === 'generated').length;
+            const extracted = total - generated;
+
+            statsContainer.innerHTML = `
+                <div class="col-md-3">
+                    <div class="stats-card"><h3>${total}</h3><p>Всего задач</p></div>
+                </div>
+                <div class="col-md-3">
+                    <div class="stats-card"><h3>${shown}</h3><p>Показано</p></div>
+                </div>
+                <div class="col-md-3">
+                    <div class="stats-card"><h3>${extracted}</h3><p>Извлечено</p></div>
+                </div>
+                <div class="col-md-3">
+                    <div class="stats-card"><h3>${generated}</h3><p>Сгенерировано</p></div>
+                </div>
+            `;
+        }
+
+        // Сброс всех фильтров
+        function resetFilters() {
+            fileSelect.value = '';
+            topicFilter.value = '';
+            difficultyFilter.value = '';
+            typeFilter.value = '';
+            searchBox.value = '';
+            allTasks = [];
+            filteredTasks = [];
+            renderTasks();
+            renderStats();
+            updateFilters();
+        }
+
+        // Переключение режима отладки
+        function toggleDebugMode() {
+            debugMode = !debugMode;
+            debugToggle.textContent = debugMode ? 'Скрыть исходный текст' : 'Показать исходный текст';
+            renderTasks(); // Перерендерим задачи с новым режимом
+        }
+
+        // --- Обработчики событий ---
+        fileSelect.addEventListener('change', loadTasks);
+        topicFilter.addEventListener('change', applyFilters);
+        difficultyFilter.addEventListener('change', applyFilters);
+        typeFilter.addEventListener('change', applyFilters);
+        searchBox.addEventListener('input', applyFilters);
+        resetFiltersBtn.addEventListener('click', resetFilters);
+        debugToggle.addEventListener('click', toggleDebugMode);
+        
+        // --- Инициализация ---
+        document.addEventListener('DOMContentLoaded', () => {
+            loadFileList();
+            renderStats(); // Показать пустую статистику
+            
+            // Настройка KaTeX автоматического рендеринга
+            if (window.renderMathInElement) {
+                console.log('KaTeX готов к работе');
+            }
+        });
+
+    </script>
+</body>
+</html>

@@ -14,6 +14,41 @@ from config import (
     SYSTEM_PROMPT
 )
 
+def process_jsonl(text: str) -> str:
+    """
+    Простая функция обработки строк для нормализации LaTeX в JSONL.
+    Заменяет кастомные LaTeX-разделители и нормализует слеши.
+    """
+    if not isinstance(text, str):
+        return text
+
+
+    
+    # Работаем с ASCII кодами для обратного слеша (код 92)
+    # Сначала схлопываем все последовательности слешей в один
+    result = []
+    i = 0
+    while i < len(text):
+        if ord(text[i]) == 92:  # Обратный слеш
+            # Пропускаем все последующие обратные слеши
+            while i < len(text) and ord(text[i]) == 92:
+                i += 1
+            # Добавляем двойной слеш
+            result.append('\\\\')
+        else:
+            result.append(text[i])
+            i += 1
+    
+    processed_text = ''.join(result)
+    
+    # Сначала заменяем display math: \\[ ... \\] -> $$ ... $$
+    processed_text = re.sub(r'\\\\\[(.*?)\\\\\]', r'$$\1$$', processed_text, flags=re.DOTALL)
+    
+    # Заменяем inline math: \\( ... \\) -> $ ... $
+    processed_text = re.sub(r'\\\\\((.*?)\\\\\)', r'$$\1$$', processed_text, flags=re.DOTALL)
+
+    return processed_text
+
 load_dotenv()
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 
@@ -82,10 +117,18 @@ def process_jsonl_chunks(chunks: list[str], output_jsonl_path: str, toc_text:str
                     if isinstance(parsed, list):
                         for elem in parsed:
                             results.append(elem)
-                            outfile.write(json.dumps(elem, ensure_ascii=False) + "\n")
+                            # Обрабатываем строки в записи перед записью
+                            processed_elem = {}
+                            for k, v in elem.items():
+                                processed_elem[k] = process_jsonl(v) if isinstance(v, str) else v
+                            outfile.write(json.dumps(processed_elem, ensure_ascii=False) + "\n")
                     else:
                         results.append(parsed)
-                        outfile.write(json.dumps(parsed, ensure_ascii=False) + "\n")
+                        # Обрабатываем строки в записи перед записью
+                        processed_parsed = {}
+                        for k, v in parsed.items():
+                            processed_parsed[k] = process_jsonl(v) if isinstance(v, str) else v
+                        outfile.write(json.dumps(processed_parsed, ensure_ascii=False) + "\n")
                     print(f"Сохранено chunk_{i:03}")
                 except Exception as e:
                     print(f"Ошибка парсинга JSON: {e}")
