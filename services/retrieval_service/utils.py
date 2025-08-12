@@ -16,33 +16,34 @@ from config import (
     SYSTEM_PROMPT
 )
 
-def process_jsonl(text: str) -> str:
+def escape_controls(s: str) -> str:
+    """Экранирует управляющие символы в строке"""
+    # \a,\b,\f,\n,\r,\t,\v → в литеральный вид
+    m = {
+        '\a': r'\a',
+        '\b': r'\b',
+        '\f': r'\f',
+        '\n': r'\n',
+        '\r': r'\r',
+        '\t': r'\t',
+        '\v': r'\v',
+    }
+    out = s.translate({ord(k): v for k, v in m.items()})
+    return out
+
+def normalize_latex_text(text: str) -> str:
     """
-    Простая функция обработки строк для нормализации LaTeX в JSONL.
-    Заменяет кастомные LaTeX-разделители и нормализует слеши.
+    Нормализует LaTeX текст для JSONL:
+    1. Экранирует управляющие символы 
+    2. Заменяет LaTeX-разделители математики на стандартные $$
     """
     if not isinstance(text, str):
         return text
 
-    text = repr(text)
-    # Работаем с ASCII кодами для обратного слеша (код 92)
-    # Сначала схлопываем все последовательности слешей в один
-    result = []
-    i = 0
-    while i < len(text):
-        if text[i] == '\\':  # Обратный слеш
-            # Пропускаем все последующие обратные слеши
-            while i < len(text) and text[i] == '\\':
-                i += 1
-            # Добавляем двойной слеш
-            result.append('\\')
-        else:
-            result.append(text[i])
-            i += 1
+    # Сначала экранируем управляющие символы
+    processed_text = escape_controls(text)
     
-    processed_text = ''.join(result)
-    
-    # Сначала заменяем display math: \\[ ... \\] -> $$ ... $$
+    # Заменяем display math: \\[ ... \\] -> $$ ... $$
     processed_text = re.sub(r'\\\[(.*?)\\\]', r'$$\1$$', processed_text, flags=re.DOTALL)
     
     # Заменяем inline math: \\( ... \\) -> $ ... $
@@ -141,14 +142,14 @@ async def process_jsonl_chunks(chunks: list[str], output_jsonl_path: str, toc_te
                             # Обрабатываем строки в записи перед записью
                             processed_elem = {}
                             for k, v in elem.items():
-                                processed_elem[k] = process_jsonl(v) if isinstance(v, str) else v
+                                processed_elem[k] = normalize_latex_text(v) if isinstance(v, str) else v
                             await outfile.write(json.dumps(processed_elem, ensure_ascii=False) + "\n")
                     else:
                         results.append(parsed)
                         # Обрабатываем строки в записи перед записью
                         processed_parsed = {}
                         for k, v in parsed.items():
-                            processed_parsed[k] = process_jsonl(v) if isinstance(v, str) else v
+                            processed_parsed[k] = normalize_latex_text(v) if isinstance(v, str) else v
                         await outfile.write(json.dumps(processed_parsed, ensure_ascii=False) + "\n")
                     print(f"✅ Сохранено chunk_{chunk_idx:03}")
                 except Exception as e:

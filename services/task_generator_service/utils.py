@@ -4,42 +4,51 @@ import re
 import openai
 import asyncio
 import aiofiles
+import time
+import logging
 from dotenv import load_dotenv
 from models import TaskMessage
 from datetime import datetime
 from typing import Dict, Any, List
 from config import OPENAI_MODEL, OPENAI_TEMPERATURE, OPENAI_SEED, SYSTEM_PROMPT
 
-def process_jsonl(text: str) -> str:
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def escape_controls(s: str) -> str:
     """
-    Простая функция обработки строк для нормализации LaTeX в JSONL.
-    Заменяет кастомные LaTeX-разделители и нормализует слеши.
+    Экранирует управляющие символы в литеральный вид
+    \a,\b,\f,\n,\r,\t,\v → в строковый вид '\a','\b','\f','\n','\r','\t','\v'
+    """
+    control_chars = {
+        '\a': r'\a',
+        '\b': r'\b', 
+        '\f': r'\f',
+        '\n': r'\n',
+        '\r': r'\r',
+        '\t': r'\t',
+        '\v': r'\v',
+    }
+    return s.translate({ord(k): v for k, v in control_chars.items()})
+
+def normalize_latex_for_jsonl(text: str) -> str:
+    """
+    Нормализует LaTeX разметку для корректного хранения в JSONL.
+    1. Экранирует управляющие символы (\f, \t, \n и т.д.)
+    2. Заменяет LaTeX display math \\[ ... \\] -> $$ ... $$
+    3. Заменяет LaTeX inline math \\( ... \\) -> $$ ... $$
     """
     if not isinstance(text, str):
         return text
-
-    text = repr(text)
-    # Работаем с ASCII кодами для обратного слеша (код 92)
-    # Сначала схлопываем все последовательности слешей в один
-    result = []
-    i = 0
-    while i < len(text):
-        if text[i] == '\\':  # Обратный слеш
-            # Пропускаем все последующие обратные слеши
-            while i < len(text) and text[i] == '\\':
-                i += 1
-            # Добавляем двойной слеш
-            result.append('\\')
-        else:
-            result.append(text[i])
-            i += 1
     
-    processed_text = ''.join(result)
+    # Экранируем управляющие символы
+    processed_text = escape_controls(text)
     
-    # Сначала заменяем display math: \\[ ... \\] -> $$ ... $$
+    # Заменяем display math: \\[ ... \\] -> $$ ... $$
     processed_text = re.sub(r'\\\[(.*?)\\\]', r'$$\1$$', processed_text, flags=re.DOTALL)
     
-    # Заменяем inline math: \\( ... \\) -> $ ... $
+    # Заменяем inline math: \\( ... \\) -> $$ ... $$
     processed_text = re.sub(r'\\\((.*?)\\\)', r'$$\1$$', processed_text, flags=re.DOTALL)
 
     return processed_text
@@ -61,6 +70,28 @@ def clean_gpt_output(raw: str) -> str:
     
     print(f"🧹 После очистки: {repr(raw[:200])}")  # Логируем результат
     return raw
+
+async def generate_task_one_with_retry(reference_task: Dict[str, Any], subject: str = "Алгебра", max_retries: int = 5) -> Dict[str, Any]:
+    """
+    Генерация задачи с retry логикой для обхода rate limits
+    """
+    for attempt in range(max_retries):
+        try:
+            return await generate_task_one(reference_task, subject)
+        except openai.RateLimitError as e:
+            wait_time = min(2 ** attempt * 10, 120)  # Увеличили задержку: от 10 до 120 сек
+            logger.warning(f"Rate limit exceeded, waiting {wait_time}s (attempt {attempt + 1}/{max_retries})")
+            await asyncio.sleep(wait_time)
+            if attempt == max_retries - 1:
+                logger.error(f"Failed to generate task after {max_retries} attempts: {e}")
+                return {"error": f"Rate limit exceeded: {str(e)}"}
+        except Exception as e:
+            logger.error(f"Error generating task (attempt {attempt + 1}): {e}")
+            if attempt == max_retries - 1:
+                return {"error": f"Generation failed: {str(e)}"}
+            await asyncio.sleep(1)
+    
+    return {"error": "Max retries exceeded"}
 
 async def generate_task_one(reference_task: Dict[str, Any], subject: str = "Алгебра", model: str = None, temperature: float = None, seed: int = None) -> Dict[str, Any]:
     # Используем значения из конфига если параметры не переданы
@@ -94,7 +125,7 @@ async def generate_task_one(reference_task: Dict[str, Any], subject: str = "Ал
         # Обрабатываем строки в данных
         for k, v in data.items():
             if isinstance(v, str):
-                data[k] = process_jsonl(v)
+                data[k] = normalize_latex_for_jsonl(v)
     except Exception as exc:
         print(f"❌ Ошибка парсинга JSON: {exc}")
         raise ValueError(f"Модель вернула невалидный JSON:\n{raw}") from exc
@@ -116,24 +147,44 @@ async def generate_tasks_from_jsonl(jsonl_path: str, subject: str = "Алгеб�
         if line.strip():
             reference_tasks.append(json.loads(line))
     
-    print(f"🔄 Генерируем {len(reference_tasks)} задач параллельно...")
+    print(f"🔄 Генерируем {len(reference_tasks)} задач с батчингом...")
     
-    # Параллельно генерируем задачи
-    tasks = [
-        generate_task_one(ref_task, subject=subject, model=model, temperature=temperature, seed=seed)
-        for ref_task in reference_tasks
-    ]
-    
-    # Выполняем все задачи параллельно
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    
-    # Фильтруем успешные результаты
+    # Генерируем задачи батчами чтобы не превысить лимиты API
+    batch_size = 3  # Уменьшили до 3 задач за раз для безопасности
     successful_tasks = []
-    for i, result in enumerate(results):
-        if isinstance(result, Exception):
-            print(f"❌ Задача {i+1} не удалась: {result}")
-        else:
-            successful_tasks.append(result)
-            print(f"✅ Задача {i+1} сгенерирована")
     
+    for i in range(0, len(reference_tasks), batch_size):
+        batch = reference_tasks[i:i + batch_size]
+        batch_num = (i // batch_size) + 1
+        total_batches = (len(reference_tasks) + batch_size - 1) // batch_size
+        
+        print(f"📦 Обрабатываем батч {batch_num}/{total_batches} ({len(batch)} задач)")
+        
+        # Генерируем задачи в батче параллельно с retry
+        batch_tasks = [
+            generate_task_one_with_retry(ref_task, subject=subject)
+            for ref_task in batch
+        ]
+        
+        # Выполняем батч
+        batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+        
+        # Обрабатываем результаты батча
+        for j, result in enumerate(batch_results):
+            task_num = i + j + 1
+            if isinstance(result, Exception):
+                logger.error(f"❌ Задача {task_num} не удалась: {result}")
+            elif isinstance(result, dict) and "error" in result:
+                logger.error(f"❌ Задача {task_num} не удалась: {result['error']}")
+            else:
+                successful_tasks.append(result)
+                print(f"✅ Задача {task_num} сгенерирована")
+        
+        # Пауза между батчами для соблюдения лимитов
+        if i + batch_size < len(reference_tasks):
+            wait_time = 15  # Увеличили до 15 секунд между батчами
+            print(f"⏱️ Пауза {wait_time}с между батчами для соблюдения лимитов API...")
+            await asyncio.sleep(wait_time)
+    
+    print(f"🎉 Генерация завершена: {len(successful_tasks)}/{len(reference_tasks)} задач успешно")
     return successful_tasks
