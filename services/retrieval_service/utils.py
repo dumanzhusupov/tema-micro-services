@@ -22,19 +22,18 @@ def process_jsonl(text: str) -> str:
     if not isinstance(text, str):
         return text
 
-
-    
+    text = repr(text)
     # Работаем с ASCII кодами для обратного слеша (код 92)
     # Сначала схлопываем все последовательности слешей в один
     result = []
     i = 0
     while i < len(text):
-        if ord(text[i]) == 92:  # Обратный слеш
+        if text[i] == '\\':  # Обратный слеш
             # Пропускаем все последующие обратные слеши
-            while i < len(text) and ord(text[i]) == 92:
+            while i < len(text) and text[i] == '\\':
                 i += 1
             # Добавляем двойной слеш
-            result.append('\\\\')
+            result.append('\\')
         else:
             result.append(text[i])
             i += 1
@@ -42,10 +41,10 @@ def process_jsonl(text: str) -> str:
     processed_text = ''.join(result)
     
     # Сначала заменяем display math: \\[ ... \\] -> $$ ... $$
-    processed_text = re.sub(r'\\\\\[(.*?)\\\\\]', r'$$\1$$', processed_text, flags=re.DOTALL)
+    processed_text = re.sub(r'\\\[(.*?)\\\]', r'$$\1$$', processed_text, flags=re.DOTALL)
     
     # Заменяем inline math: \\( ... \\) -> $ ... $
-    processed_text = re.sub(r'\\\\\((.*?)\\\\\)', r'$$\1$$', processed_text, flags=re.DOTALL)
+    processed_text = re.sub(r'\\\((.*?)\\\)', r'$$\1$$', processed_text, flags=re.DOTALL)
 
     return processed_text
 

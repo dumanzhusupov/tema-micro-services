@@ -5,7 +5,7 @@ from flask_cors import CORS
 
 # --- Конфигурация ---
 # Порт, на котором будет работать сервер
-PORT = 5000
+PORT = 5001
 # Директория, где лежат файлы с задачами
 DATA_DIR = os.path.join(os.path.dirname(__file__), 'data', 'retrieved_jsonl')
 # Имя основного HTML файла
