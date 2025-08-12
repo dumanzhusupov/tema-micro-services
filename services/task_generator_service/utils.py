@@ -2,6 +2,8 @@ import json
 import os
 import re
 import openai
+import asyncio
+import aiofiles
 from dotenv import load_dotenv
 from models import TaskMessage
 from datetime import datetime
@@ -44,7 +46,9 @@ def process_jsonl(text: str) -> str:
 
 load_dotenv()
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
-openai.api_key = OPENAI_KEY
+
+# Асинхронный клиент OpenAI
+client = openai.AsyncOpenAI(api_key=OPENAI_KEY)
 
 def clean_gpt_output(raw: str) -> str:
     import re
@@ -58,7 +62,7 @@ def clean_gpt_output(raw: str) -> str:
     print(f"🧹 После очистки: {repr(raw[:200])}")  # Логируем результат
     return raw
 
-def generate_task_one(reference_task: Dict[str, Any], subject: str = "Алгебра", model: str = None, temperature: float = None, seed: int = None) -> Dict[str, Any]:
+async def generate_task_one(reference_task: Dict[str, Any], subject: str = "Алгебра", model: str = None, temperature: float = None, seed: int = None) -> Dict[str, Any]:
     # Используем значения из конфига если параметры не переданы
     model = model or OPENAI_MODEL
     temperature = temperature or OPENAI_TEMPERATURE
@@ -72,11 +76,13 @@ def generate_task_one(reference_task: Dict[str, Any], subject: str = "Алгеб
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
     ]
-    resp = openai.ChatCompletion.create(
+    
+    # Асинхронный вызов OpenAI API
+    resp = await client.chat.completions.create(
         model=model,
+        messages=messages,
         temperature=temperature,
         seed=seed,
-        messages=messages,
     )
     raw = resp.choices[0].message.content.strip()
     print(f"🤖 GPT ответ: {repr(raw)}")
@@ -94,16 +100,40 @@ def generate_task_one(reference_task: Dict[str, Any], subject: str = "Алгеб
         raise ValueError(f"Модель вернула невалидный JSON:\n{raw}") from exc
     return data
 
-def generate_tasks_from_jsonl(jsonl_path: str, subject: str = "Алгебра", model: str = None, temperature: float = None, seed: int = None) -> List[Dict[str, Any]]:
+async def generate_tasks_from_jsonl(jsonl_path: str, subject: str = "Алгебра", model: str = None, temperature: float = None, seed: int = None) -> List[Dict[str, Any]]:
     # Используем значения из конфига если параметры не переданы
     model = model or OPENAI_MODEL
     temperature = temperature or OPENAI_TEMPERATURE
     seed = seed or OPENAI_SEED
     
-    tasks = []
-    with open(jsonl_path, "r", encoding="utf-8") as f:
-        for line in f:
-            ref_task = json.loads(line)
-            new_task = generate_task_one(ref_task, subject=subject, model=model, temperature=temperature, seed=seed)
-            tasks.append(new_task)
-    return tasks
+    # Асинхронно читаем файл
+    async with aiofiles.open(jsonl_path, "r", encoding="utf-8") as f:
+        lines = await f.readlines()
+    
+    # Парсим задачи
+    reference_tasks = []
+    for line in lines:
+        if line.strip():
+            reference_tasks.append(json.loads(line))
+    
+    print(f"🔄 Генерируем {len(reference_tasks)} задач параллельно...")
+    
+    # Параллельно генерируем задачи
+    tasks = [
+        generate_task_one(ref_task, subject=subject, model=model, temperature=temperature, seed=seed)
+        for ref_task in reference_tasks
+    ]
+    
+    # Выполняем все задачи параллельно
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Фильтруем успешные результаты
+    successful_tasks = []
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            print(f"❌ Задача {i+1} не удалась: {result}")
+        else:
+            successful_tasks.append(result)
+            print(f"✅ Задача {i+1} сгенерирована")
+    
+    return successful_tasks

@@ -75,12 +75,12 @@ def clean_gpt_output_topics(raw: str) -> str:
         raw = re.sub(r"```$", "", raw).strip()
     return raw
 
-def beautify_topics(topics_text: str) -> str:
+async def beautify_topics(topics_text: str) -> str:
     if not OPENAI_KEY:
         raise RuntimeError("OPENAI_API_KEY не найден в .env")
-    client = openai.OpenAI(api_key=OPENAI_KEY)
+    client = openai.AsyncOpenAI(api_key=OPENAI_KEY)
     try:
-        response = client.chat.completions.create(
+        response = await client.chat.completions.create(
             model=OPENAI_MODEL,
             temperature=OPENAI_TEMPERATURE,
             top_p=OPENAI_TOP_P,

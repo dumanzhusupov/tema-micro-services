@@ -26,5 +26,5 @@ async def extract_toc_endpoint(file: UploadFile = File(...)):
     # с помощью ГПТ вернет отформатированный Table Of Contents)
     if toc is None:
         return {"toc": None}
-    beautified = beautify_topics(toc)
+    beautified = await beautify_topics(toc)
     return {"toc": beautified}
