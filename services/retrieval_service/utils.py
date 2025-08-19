@@ -1,6 +1,8 @@
 import os
 import json
 import re
+import asyncio
+import aiofiles
 from pathlib import Path
 from dotenv import load_dotenv
 import openai
@@ -22,19 +24,18 @@ def process_jsonl(text: str) -> str:
     if not isinstance(text, str):
         return text
 
-
-    
+    text = repr(text)
     # Работаем с ASCII кодами для обратного слеша (код 92)
     # Сначала схлопываем все последовательности слешей в один
     result = []
     i = 0
     while i < len(text):
-        if ord(text[i]) == 92:  # Обратный слеш
+        if text[i] == '\\':  # Обратный слеш
             # Пропускаем все последующие обратные слеши
-            while i < len(text) and ord(text[i]) == 92:
+            while i < len(text) and text[i] == '\\':
                 i += 1
             # Добавляем двойной слеш
-            result.append('\\\\')
+            result.append('\\')
         else:
             result.append(text[i])
             i += 1
@@ -42,17 +43,18 @@ def process_jsonl(text: str) -> str:
     processed_text = ''.join(result)
     
     # Сначала заменяем display math: \\[ ... \\] -> $$ ... $$
-    processed_text = re.sub(r'\\\\\[(.*?)\\\\\]', r'$$\1$$', processed_text, flags=re.DOTALL)
+    processed_text = re.sub(r'\\\[(.*?)\\\]', r'$$\1$$', processed_text, flags=re.DOTALL)
     
     # Заменяем inline math: \\( ... \\) -> $ ... $
-    processed_text = re.sub(r'\\\\\((.*?)\\\\\)', r'$$\1$$', processed_text, flags=re.DOTALL)
+    processed_text = re.sub(r'\\\((.*?)\\\)', r'$$\1$$', processed_text, flags=re.DOTALL)
 
     return processed_text
 
 load_dotenv()
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 
-client = openai.OpenAI(api_key=OPENAI_KEY)
+# Асинхронный клиент OpenAI
+client = openai.AsyncOpenAI(api_key=OPENAI_KEY)
 
 def clean_gpt_output(raw: str) -> str:
     if raw.lstrip().startswith("```"):
@@ -60,7 +62,7 @@ def clean_gpt_output(raw: str) -> str:
         raw = re.sub(r"```$", "", raw).strip()
     return raw
 
-def process_chunk(chunk_text, toc_text:str):
+async def process_chunk(chunk_text, toc_text: str):
     """
     Обрабатывает один чанк через GPT, добавляя список тем (toc_text) к SYSTEM_PROMPT, если он передан.
     """
@@ -71,7 +73,8 @@ def process_chunk(chunk_text, toc_text:str):
     print(f"Prompt (первые 300 символов): {prompt[:300]}")
     print(f"Chunk (первые 300 символов): {chunk_text[:300]}")
     try:
-        response = client.chat.completions.create(
+        # Асинхронный вызов OpenAI API
+        response = await client.chat.completions.create(
             model=OPENAI_MODEL,
             temperature=OPENAI_TEMPERATURE,
             top_p=OPENAI_TOP_P,
@@ -92,28 +95,46 @@ def process_chunk(chunk_text, toc_text:str):
         traceback.print_exc()
         return None
 
-def process_jsonl_chunks(chunks: list[str], output_jsonl_path: str, toc_text:str, start_chunk=0, end_chunk=None):
+async def process_jsonl_chunks(chunks: list[str], output_jsonl_path: str, toc_text: str, start_chunk=0, end_chunk=None):
     """
-    Обрабатывает список чанков через GPT, добавляет список тем (toc_text) к SYSTEM_PROMPT,
+    Обрабатывает список чанков через GPT параллельно, добавляет список тем (toc_text) к SYSTEM_PROMPT,
     сохраняет результат в output_jsonl_path (jsonl), возвращает (list обработанных чанков, путь к созданному jsonl)
     """
     results = []
     if end_chunk is None:
         end_chunk = len(chunks)
-    with open(output_jsonl_path, "w", encoding="utf-8") as outfile:
-        for i, chunk_text in enumerate(chunks):
-            if i < start_chunk or i >= end_chunk:
+    
+    # Выбираем чанки для обработки
+    selected_chunks = [
+        (i, chunk_text) for i, chunk_text in enumerate(chunks)
+        if start_chunk <= i < end_chunk
+    ]
+    
+    print(f"\n🔄 Обрабатываем {len(selected_chunks)} чанков параллельно...")
+    
+    # Параллельно обрабатываем чанки
+    tasks = [
+        process_chunk(chunk_text, toc_text) 
+        for i, chunk_text in selected_chunks
+    ]
+    
+    # Выполняем все задачи параллельно
+    chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Асинхронно записываем результаты в файл
+    async with aiofiles.open(output_jsonl_path, "w", encoding="utf-8") as outfile:
+        for (chunk_idx, chunk_text), tagged_result in zip(selected_chunks, chunk_results):
+            print(f"\n=== Результат chunk_{chunk_idx:03} ===")
+            
+            if isinstance(tagged_result, Exception):
+                print(f"❌ Ошибка в chunk_{chunk_idx:03}: {tagged_result}")
                 continue
-            print(f"\n=== Обработка chunk_{i:03} ===")
-            print(f"Исходный чанк (первые 300 символов): {chunk_text[:300]}")
-            print(f"Длина чанка: {len(chunk_text)} символов")
-            print(f"Переданный toc_text (первые 300 символов): {toc_text[:300] if toc_text else 'None'}")
-            tagged_result = process_chunk(chunk_text, toc_text)
+                
             print(f"GPT raw response: {tagged_result}")
             if tagged_result and tagged_result != "[]":
                 try:
                     parsed = json.loads(tagged_result)
-                    print(f"Успешно распарсено как JSON: {type(parsed)}")
+                    print(f"✅ Успешно распарсено как JSON: {type(parsed)}")
                     if isinstance(parsed, list):
                         for elem in parsed:
                             results.append(elem)
@@ -121,22 +142,23 @@ def process_jsonl_chunks(chunks: list[str], output_jsonl_path: str, toc_text:str
                             processed_elem = {}
                             for k, v in elem.items():
                                 processed_elem[k] = process_jsonl(v) if isinstance(v, str) else v
-                            outfile.write(json.dumps(processed_elem, ensure_ascii=False) + "\n")
+                            await outfile.write(json.dumps(processed_elem, ensure_ascii=False) + "\n")
                     else:
                         results.append(parsed)
                         # Обрабатываем строки в записи перед записью
                         processed_parsed = {}
                         for k, v in parsed.items():
                             processed_parsed[k] = process_jsonl(v) if isinstance(v, str) else v
-                        outfile.write(json.dumps(processed_parsed, ensure_ascii=False) + "\n")
-                    print(f"Сохранено chunk_{i:03}")
+                        await outfile.write(json.dumps(processed_parsed, ensure_ascii=False) + "\n")
+                    print(f"✅ Сохранено chunk_{chunk_idx:03}")
                 except Exception as e:
-                    print(f"Ошибка парсинга JSON: {e}")
+                    print(f"❌ Ошибка парсинга JSON chunk_{chunk_idx:03}: {e}")
                     print(f"Ответ: {tagged_result}")
             else:
-                print(f"Пропущен chunk_{i:03}")
-    print(f"\nВсе загружено! Количество результатов: {len(results)}")
-    print(f"Файл сохранён по пути: {output_jsonl_path}")
+                print(f"⏭️ Пропущен chunk_{chunk_idx:03}")
+    
+    print(f"\n🎉 Все загружено! Количество результатов: {len(results)}")
+    print(f"📁 Файл сохранён по пути: {output_jsonl_path}")
     return results, output_jsonl_path
 
 

@@ -10,7 +10,7 @@ async def generate_task_api(task: TaskMessage, subject: Optional[str] = "Алг�
     """
     Генерирует одну новую задачу по примеру (payload TaskMessage).
     """
-    new_task = generate_task_one(task.payload, subject=subject)
+    new_task = await generate_task_one(task.payload, subject=subject)
     return {"generated_task": new_task}
 
 @app.post("/generate-tasks-from-jsonl/")
@@ -18,5 +18,5 @@ async def generate_tasks_from_jsonl_api(jsonl_path: str, subject: Optional[str] 
     """
     Генерирует задачи по всем примерам из указанного jsonl-файла.
     """
-    tasks = generate_tasks_from_jsonl(jsonl_path, subject=subject)
+    tasks = await generate_tasks_from_jsonl(jsonl_path, subject=subject)
     return {"generated_tasks": tasks}

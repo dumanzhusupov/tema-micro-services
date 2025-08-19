@@ -19,7 +19,7 @@ async def process_chunks_endpoint(
     if output_jsonl_path is None:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jsonl", dir=os.getcwd()) as tmp:
             output_jsonl_path = tmp.name
-    results, jsonl_path = process_jsonl_chunks(
+    results, jsonl_path = await process_jsonl_chunks(
         chunks=request.chunks,
         toc_text=request.toc_text,
         output_jsonl_path=output_jsonl_path,

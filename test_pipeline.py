@@ -92,8 +92,8 @@ def test_retrieval_service(chunks: List[str], toc: str, book_name: str) -> List[
         return []
     
     try:
-        # Используем только первые 3 чанка для быстрого тестирования
-        test_chunks = chunks[:3]
+        # Используем только первые 5 чанка для быстрого тестирования
+        test_chunks = chunks[:5]
         
         print(f"   📊 Processing {len(test_chunks)} chunks with {'TOC' if toc else 'no TOC'}")
         
@@ -139,12 +139,12 @@ def test_task_generator_service(tasks: List[Dict[str, Any]], book_name: str) -> 
         return []
     
     try:
-        # Берем максимум 3 валидные задачи для генерации
+        # Берем максимум 5 валидные задачи для генерации
         valid_tasks = []
         for task in tasks:
             if isinstance(task, dict) and task.get('original'):
                 valid_tasks.append(task)
-                if len(valid_tasks) >= 3:
+                if len(valid_tasks) >= 5:  # Ограничиваем количество задач для теста
                     break
         
         if not valid_tasks:
