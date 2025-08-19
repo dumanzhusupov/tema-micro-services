@@ -176,7 +176,7 @@ def main():
         return
     
     # 2. Загружаем примеры задач
-    sample_file = "data/retrieved_jsonl/algebra_6_1_sample_retrieved_tasks.jsonl"
+    sample_file = "data/retrieved_jsonl/retrieved.jsonl"
     sample_tasks = load_sample_tasks(sample_file)
     
     if not sample_tasks:
@@ -189,7 +189,7 @@ def main():
     
     # 4. Сохраняем результаты
     if generated_tasks:
-        output_file = "data/retrieved_jsonl/test_generated_tasks.jsonl"
+        output_file = "data/retrieved_jsonl/generated.jsonl"
         save_generated_tasks(generated_tasks, output_file)
     
     # 5. Показываем статистику

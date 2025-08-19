@@ -8,6 +8,7 @@ import requests
 import json
 import time
 import os
+import math
 from typing import Dict, List, Any
 
 # Конфигурация сервисов
@@ -17,6 +18,9 @@ SERVICES = {
     "task_generator": "http://localhost:8004",
     "ocr": "http://localhost:8003"
 }
+
+# Параметр батчинга для Retrieval (по умолчанию 10)
+BATCH_SIZE = int(os.getenv("RETRIEVAL_BATCH_SIZE", "10"))
 
 def test_service_health(service_name: str, url: str) -> bool:
     """Проверяет доступность сервиса"""
@@ -37,7 +41,7 @@ def test_chunking_service() -> tuple[List[str], str, str]:
     print("🔨 Step 1: Processing document chunks...")
     
     # Читаем тестовый файл
-    test_file_path = "data/books_md/algebra_6_1_sample.md"
+    test_file_path = "data/books_md/algebra_6_1.md"
     if not os.path.exists(test_file_path):
         print(f"   ❌ File not found: {test_file_path}")
         return [], "", ""
@@ -92,40 +96,57 @@ def test_retrieval_service(chunks: List[str], toc: str, book_name: str) -> List[
         return []
     
     try:
-        # Используем только первые 5 чанка для быстрого тестирования
-        test_chunks = chunks[:5]
-        
-        print(f"   📊 Processing {len(test_chunks)} chunks with {'TOC' if toc else 'no TOC'}")
-        
-        # Создаем имя файла для извлеченных задач
-        retrieved_jsonl_path = f"data/retrieved_jsonl/{book_name}_retrieved_tasks.jsonl"
-        
-        request_data = {
-            "chunks": test_chunks,
-            "toc_text": toc or "",
-            "output_jsonl_path": retrieved_jsonl_path,
-            "start_chunk": 0,
-            "end_chunk": len(test_chunks)
-        }
-        
-        response = requests.post(
-            f"{SERVICES['retrieval']}/process_chunks/",
-            json=request_data,
-            timeout=60
-        )
-        
-        if response.status_code == 200:
-            result = response.json()
-            results = result.get('results', [])
-            
-            print(f"   ✅ Found {len(results)} math problems")
-            print(f"   💾 Saved to: {retrieved_jsonl_path}")
-            
-            return results
+        # Limit processing to the first 50 chunks for test runs
+        if len(chunks) > 50:
+            print("   🔒 Limiting to first 50 chunks for test run")
+            chunks = chunks[:50]
+
+        total = len(chunks)
+        batches = max(1, math.ceil(total / BATCH_SIZE))
+        print(f"   📊 Processing {total} chunks in {batches} batches of {BATCH_SIZE} ({'with TOC' if toc else 'no TOC'})")
+
+        combined_results: List[Dict[str, Any]] = []
+        final_jsonl_path = "data/retrieved_jsonl/retrieved.jsonl"
+
+        for b in range(batches):
+            start = b * BATCH_SIZE
+            end = min(start + BATCH_SIZE, total)
+            batch_chunks = chunks[start:end]
+
+            print(f"   ⏱️ Batch {b+1}/{batches}: chunks [{start}:{end})")
+
+            request_data = {
+                "chunks": batch_chunks,
+                "toc_text": toc or "",
+                # Do not persist per-batch files; combine in-memory and write once
+                "start_chunk": 0,
+                "end_chunk": len(batch_chunks)
+            }
+
+            response = requests.post(
+                f"{SERVICES['retrieval']}/process_chunks/",
+                json=request_data,
+                timeout=120
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                results = result.get('results', [])
+                combined_results.extend(results)
+                print(f"      ✅ Found {len(results)} tasks in batch {b+1}")
+            else:
+                print(f"      ❌ Batch {b+1} failed: HTTP {response.status_code}")
+
+        # Save only one consolidated JSONL
+        if combined_results:
+            save_extracted_tasks_to_jsonl(combined_results, final_jsonl_path)
+            print(f"   ✅ Total found: {len(combined_results)} tasks")
+            print(f"   💾 Saved JSONL to: {final_jsonl_path}")
         else:
-            print(f"   ❌ Retrieval failed: {response.status_code}")
-            return []
-            
+            print("   ⚠️ No tasks found in any batch")
+
+        return combined_results
+        
     except Exception as e:
         print(f"   ❌ Retrieval error: {str(e)[:50]}...")
         return []
@@ -139,12 +160,12 @@ def test_task_generator_service(tasks: List[Dict[str, Any]], book_name: str) -> 
         return []
     
     try:
-        # Берем максимум 5 валидные задачи для генерации
+        # Берем максимум 50 валидные задачи для генерации
         valid_tasks = []
         for task in tasks:
             if isinstance(task, dict) and task.get('original'):
                 valid_tasks.append(task)
-                if len(valid_tasks) >= 5:  # Ограничиваем количество задач для теста
+                if len(valid_tasks) >= 50:  # Ограничиваем количество задач для теста
                     break
         
         if not valid_tasks:
@@ -178,8 +199,8 @@ def test_task_generator_service(tasks: List[Dict[str, Any]], book_name: str) -> 
                 print(f"   ❌ Task {i}/{len(valid_tasks)} failed")
         
         if generated_tasks:
-            # Сохраняем все сгенерированные задачи в JSONL файл
-            generated_jsonl_path = f"data/retrieved_jsonl/{book_name}_generated_tasks.jsonl"
+            # Save all generated tasks into a single file
+            generated_jsonl_path = "data/retrieved_jsonl/generated.jsonl"
             save_generated_tasks_to_jsonl(generated_tasks, generated_jsonl_path)
             print(f"   💾 Saved {len(generated_tasks)} tasks to: {generated_jsonl_path}")
         
@@ -200,6 +221,14 @@ def save_generated_tasks_to_jsonl(tasks: List[Dict[str, Any]], file_path: str):
     with open(file_path, 'w', encoding='utf-8') as f:
         for task in tasks:
             json.dump(task, f, ensure_ascii=False)
+            f.write('\n')
+
+def save_extracted_tasks_to_jsonl(results: List[Dict[str, Any]], file_path: str):
+    """Сохраняет список извлечённых задач в JSONL файл"""
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    with open(file_path, 'w', encoding='utf-8') as f:
+        for item in results:
+            json.dump(item, f, ensure_ascii=False)
             f.write('\n')
 
 def main():
@@ -247,9 +276,9 @@ def main():
     print(f"⚡ Generated problems: {len(generated_tasks)}")
     
     if extracted_tasks:
-        print(f"📁 Extracted data: data/retrieved_jsonl/{book_name}_retrieved_tasks.jsonl")
+        print(f"📁 Extracted data: data/retrieved_jsonl/retrieved.jsonl")
     if generated_tasks:
-        print(f"📁 Generated data: data/retrieved_jsonl/{book_name}_generated_tasks.jsonl")
+        print(f"📁 Generated data: data/retrieved_jsonl/generated.jsonl")
     
     print("")
     if generated_tasks:

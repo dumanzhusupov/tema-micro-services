@@ -7,9 +7,9 @@ DEFAULT_MODEL_FOR_TOKENIZATION = "gpt-3.5-turbo"
 DEFAULT_WARN_TOKENS = 2000
 
 # OpenAI модель и параметры для beautify_topics
-OPENAI_MODEL = "gpt-4o-mini"  # Исправили модель
+OPENAI_MODEL = "gpt-4o"  # Исправили модель
 OPENAI_TEMPERATURE = 0.2
-OPENAI_TOP_P = 1
+OPENAI_TOP_P = 0.8
 OPENAI_FREQUENCY_PENALTY = 0
 OPENAI_PRESENCE_PENALTY = 0
 
@@ -19,5 +19,11 @@ TOPICS_PROMPT = """
 """
 
 # Паттерны для извлечения оглавления
+TOC_START_PATTERNS = [
+	r"СОДЕРЖАНИЕ",
+	r"Оглавление",
+	r"МАЗМҰНЫ",  # kazakh
+	r"Contents"
+]
 TOC_END_PATTERNS = [r"Учебное издание", r"Глоссарий", r"Ответы", r"Библиография"]
 TOC_MIN_LENGTH = 50  # Минимальная длина оглавления

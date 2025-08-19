@@ -2,53 +2,48 @@ import json
 import os
 import re
 import openai
-import asyncio
-import aiofiles
 from dotenv import load_dotenv
 from models import TaskMessage
 from datetime import datetime
 from typing import Dict, Any, List
 from config import OPENAI_MODEL, OPENAI_TEMPERATURE, OPENAI_SEED, SYSTEM_PROMPT
 
-def process_jsonl(text: str) -> str:
+def escape_controls(s: str) -> str:
+    """Экранирует управляющие символы в строке"""
+    m = {
+        '\a': r'\a',
+        '\b': r'\b',
+        '\f': r'\f',
+        '\n': r'\n',
+        '\r': r'\r',
+        '\t': r'\t',
+        '\v': r'\v',
+    }
+    return s.translate({ord(k): v for k, v in m.items()})
+
+def normalize_latex_text(text: str) -> str:
     """
-    Простая функция обработки строк для нормализации LaTeX в JSONL.
-    Заменяет кастомные LaTeX-разделители и нормализует слеши.
+    Нормализует LaTeX текст для JSONL:
+    1. Экранирует управляющие символы
+    2. Заменяет LaTeX-разделители математики на стандартные $$
     """
     if not isinstance(text, str):
         return text
 
-    text = repr(text)
-    # Работаем с ASCII кодами для обратного слеша (код 92)
-    # Сначала схлопываем все последовательности слешей в один
-    result = []
-    i = 0
-    while i < len(text):
-        if text[i] == '\\':  # Обратный слеш
-            # Пропускаем все последующие обратные слеши
-            while i < len(text) and text[i] == '\\':
-                i += 1
-            # Добавляем двойной слеш
-            result.append('\\')
-        else:
-            result.append(text[i])
-            i += 1
-    
-    processed_text = ''.join(result)
-    
-    # Сначала заменяем display math: \\[ ... \\] -> $$ ... $$
-    processed_text = re.sub(r'\\\[(.*?)\\\]', r'$$\1$$', processed_text, flags=re.DOTALL)
-    
-    # Заменяем inline math: \\( ... \\) -> $ ... $
-    processed_text = re.sub(r'\\\((.*?)\\\)', r'$$\1$$', processed_text, flags=re.DOTALL)
+    processed_text = escape_controls(text)
+    # Display math: \[ ... \] -> $ ... $
+    processed_text = re.sub(r'\\\[(.*?)\\\]', r'$\1$', processed_text, flags=re.DOTALL)
+    # Inline math: \( ... \) -> $ ... $ (согласовано с retrieval_service)
+    processed_text = re.sub(r'\\\((.*?)\\\)', r'$\1$', processed_text, flags=re.DOTALL)
+
+    processed_text = re.sub(r'\$\$', r'$', processed_text, flags=re.DOTALL)
 
     return processed_text
 
 load_dotenv()
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
-
-# Асинхронный клиент OpenAI
-client = openai.AsyncOpenAI(api_key=OPENAI_KEY)
+# Use async client to match FastAPI async endpoints
+client = openai.AsyncOpenAI(api_key=OPENAI_KEY) if OPENAI_KEY else None
 
 def clean_gpt_output(raw: str) -> str:
     import re
@@ -62,10 +57,10 @@ def clean_gpt_output(raw: str) -> str:
     print(f"🧹 После очистки: {repr(raw[:200])}")  # Логируем результат
     return raw
 
-async def generate_task_one(reference_task: Dict[str, Any], subject: str = "Алгебра", model: str = None, temperature: float = None, seed: int = None) -> Dict[str, Any]:
+async def generate_task_one(reference_task: Dict[str, Any], subject: str = "Алгебра", model: str = None, seed: int = None) -> Dict[str, Any]:
     # Используем значения из конфига если параметры не переданы
     model = model or OPENAI_MODEL
-    temperature = temperature or OPENAI_TEMPERATURE
+    #temperature = temperature or OPENAI_TEMPERATURE
     seed = seed or OPENAI_SEED
     
     user_prompt = (
@@ -76,13 +71,14 @@ async def generate_task_one(reference_task: Dict[str, Any], subject: str = "Ал
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
     ]
-    
-    # Асинхронный вызов OpenAI API
+    if client is None:
+        raise RuntimeError("OPENAI_API_KEY is not set")
+    # Enforce JSON output to avoid parsing errors
     resp = await client.chat.completions.create(
         model=model,
+        #temperature=temperature,
         messages=messages,
-        temperature=temperature,
-        seed=seed,
+        response_format={"type": "json_object"},
     )
     raw = resp.choices[0].message.content.strip()
     print(f"🤖 GPT ответ: {repr(raw)}")
@@ -94,46 +90,22 @@ async def generate_task_one(reference_task: Dict[str, Any], subject: str = "Ал
         # Обрабатываем строки в данных
         for k, v in data.items():
             if isinstance(v, str):
-                data[k] = process_jsonl(v)
+                data[k] = normalize_latex_text(v)
     except Exception as exc:
         print(f"❌ Ошибка парсинга JSON: {exc}")
         raise ValueError(f"Модель вернула невалидный JSON:\n{raw}") from exc
     return data
 
-async def generate_tasks_from_jsonl(jsonl_path: str, subject: str = "Алгебра", model: str = None, temperature: float = None, seed: int = None) -> List[Dict[str, Any]]:
+async def generate_tasks_from_jsonl(jsonl_path: str, subject: str = "Алгебра", model: str = None, seed: int = None) -> List[Dict[str, Any]]:
     # Используем значения из конфига если параметры не переданы
     model = model or OPENAI_MODEL
-    temperature = temperature or OPENAI_TEMPERATURE
+    #temperature = temperature or OPENAI_TEMPERATURE
     seed = seed or OPENAI_SEED
     
-    # Асинхронно читаем файл
-    async with aiofiles.open(jsonl_path, "r", encoding="utf-8") as f:
-        lines = await f.readlines()
-    
-    # Парсим задачи
-    reference_tasks = []
-    for line in lines:
-        if line.strip():
-            reference_tasks.append(json.loads(line))
-    
-    print(f"🔄 Генерируем {len(reference_tasks)} задач параллельно...")
-    
-    # Параллельно генерируем задачи
-    tasks = [
-        generate_task_one(ref_task, subject=subject, model=model, temperature=temperature, seed=seed)
-        for ref_task in reference_tasks
-    ]
-    
-    # Выполняем все задачи параллельно
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    
-    # Фильтруем успешные результаты
-    successful_tasks = []
-    for i, result in enumerate(results):
-        if isinstance(result, Exception):
-            print(f"❌ Задача {i+1} не удалась: {result}")
-        else:
-            successful_tasks.append(result)
-            print(f"✅ Задача {i+1} сгенерирована")
-    
-    return successful_tasks
+    tasks: List[Dict[str, Any]] = []
+    with open(jsonl_path, "r", encoding="utf-8") as f:
+        for line in f:
+            ref_task = json.loads(line)
+            new_task = await generate_task_one(ref_task, subject=subject, model=model, seed=seed)
+            tasks.append(new_task)
+    return tasks
