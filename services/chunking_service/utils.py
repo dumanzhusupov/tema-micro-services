@@ -14,6 +14,7 @@ from config import (
     OPENAI_FREQUENCY_PENALTY,
     OPENAI_PRESENCE_PENALTY,
     TOPICS_PROMPT,
+    TOC_START_PATTERNS,
     TOC_END_PATTERNS,
     TOC_MIN_LENGTH
 )
@@ -45,28 +46,109 @@ def chunk_text(text: str, warn_tokens: int = None, model: str = None):
     logging.info(f"Максимальное число токенов в чанке: {max_tokens}")
     return chunks
 
-def extract_table_of_contents(text: str) -> str | None:
-    # Ищем "СОДЕРЖАНИЕ" капсом (может быть с ## в начале)
-    start_match = re.search(r"#{0,3}\s*СОДЕРЖАНИЕ", text, re.IGNORECASE)
-    if not start_match:
-        return None
-    start_idx = start_match.end()
-    
-    # Ищем конец содержания - может быть "Учебное издание", "Глоссарий", или конец файла
-    end_idx = len(text)  # По умолчанию до конца файла
-    
-    for pattern in TOC_END_PATTERNS:
-        end_match = re.search(pattern, text[start_idx:], re.IGNORECASE)
-        if end_match:
-            end_idx = start_idx + end_match.start()
+def _find_toc_bounds(text: str) -> tuple[int | None, int | None]:
+    """Находит границы оглавления по стартовым и конечным паттернам."""
+    # Старт: поддержка нескольких заголовков и без markdown-хэшей
+    start_idx = None
+    for pat in TOC_START_PATTERNS:
+        m = re.search(rf"(?mi)^(?:#{1,3}\s*)?\s*{pat}\b", text)
+        if m:
+            start_idx = m.end()
             break
-    
-    toc_content = text[start_idx:end_idx].strip()
-    # Если содержимое слишком короткое, возможно это не то что нужно
-    if len(toc_content) < TOC_MIN_LENGTH:
-        return None
-    
-    return toc_content
+
+    if start_idx is None:
+        return None, None
+
+    # Конец: ищем ближайшее из заданных паттернов ниже старта
+    end_candidates = []
+    tail = text[start_idx:]
+    for pat in TOC_END_PATTERNS:
+        m = re.search(rf"(?mi)^(?:#{1,3}\s*)?\s*{pat}\b", tail)
+        if m:
+            end_candidates.append(start_idx + m.start())
+
+    end_idx = min(end_candidates) if end_candidates else len(text)
+    return start_idx, end_idx
+
+
+def _cleanup_toc_block(block: str) -> str:
+    """Чистит блок оглавления: убирает лишние пробелы, множественные пустые строки,
+    обрезает явные номера страниц вида '.... 12' и отбрасывает мусорные строки."""
+    lines = [l.rstrip() for l in block.splitlines()]
+    cleaned = []
+    for ln in lines:
+        s = ln.strip()
+        if not s:
+            # допускаем одиночные пустые строки для визуальных блоков
+            if cleaned and cleaned[-1] != "":
+                cleaned.append("")
+            continue
+        # убираем концевые номера страниц в виде многоточий и цифр
+        s = re.sub(r"\.{2,}\s*\d+\s*$", "", s)
+        # убираем ведущие номера разделов (1., 1.2., А., т.п.)
+        s = re.sub(r"^(?:[A-Za-zА-Яа-яІіЇїЁё]\.|\d+(?:\.\d+)*\)|\d+(?:\.\d+)*\.?\s+)", "", s)
+        # отбрасываем строки, похожие на номера страниц
+        if re.fullmatch(r"\d{1,4}", s):
+            continue
+        # слишком короткие технические хвосты пропускаем
+        if len(s) < 2:
+            continue
+        cleaned.append(s)
+
+    # убираем ведущие/замыкающие пустые строки
+    while cleaned and cleaned[0] == "":
+        cleaned.pop(0)
+    while cleaned and cleaned[-1] == "":
+        cleaned.pop()
+
+    return "\n".join(cleaned)
+
+
+def _fallback_scan(text: str) -> str | None:
+    """Запасной вариант: сканируем первые и последние страницы (по строкам)
+    и пытаемся вытащить блок, похожий на оглавление."""
+    lines = text.splitlines()
+    n = len(lines)
+    window = 300  # примерно 10-15 страниц при плотном тексте
+    candidates = [lines[:window], lines[max(0, n - window):]]
+
+    best = None
+    for section in candidates:
+        block = "\n".join(section)
+        # ищем явные признаки содержания: множественные линии с многоточиями и цифрами
+        matches = re.findall(r"^.+\.{2,}\s*\d+\s*$", block, flags=re.MULTILINE)
+        if len(matches) >= 5:
+            # выделяем максимально плотный подблок с такими линиями
+            start_line = None
+            end_line = None
+            for i, ln in enumerate(section):
+                if re.search(r"\.{2,}\s*\d+\s*$", ln):
+                    start_line = i
+                    break
+            for j in range(len(section) - 1, -1, -1):
+                if re.search(r"\.{2,}\s*\d+\s*$", section[j]):
+                    end_line = j
+                    break
+            if start_line is not None and end_line is not None and end_line > start_line:
+                candidate = "\n".join(section[start_line:end_line + 1])
+                if not best or len(candidate) > len(best):
+                    best = candidate
+
+    if best and len(best) >= TOC_MIN_LENGTH:
+        return _cleanup_toc_block(best)
+    return None
+
+
+def extract_table_of_contents(text: str) -> str | None:
+    # 1) Попытка по заголовкам
+    start_idx, end_idx = _find_toc_bounds(text)
+    if start_idx is not None and end_idx is not None and end_idx > start_idx:
+        block = text[start_idx:end_idx].strip()
+        cleaned = _cleanup_toc_block(block)
+        if len(cleaned) >= TOC_MIN_LENGTH:
+            return cleaned
+    # 2) Фолбэк скан
+    return _fallback_scan(text)
 
 def clean_gpt_output_topics(raw: str) -> str:
     import re

@@ -43,11 +43,13 @@ def normalize_latex_text(text: str) -> str:
     # Сначала экранируем управляющие символы
     processed_text = escape_controls(text)
     
-    # Заменяем display math: \\[ ... \\] -> $$ ... $$
-    processed_text = re.sub(r'\\\[(.*?)\\\]', r'$$\1$$', processed_text, flags=re.DOTALL)
+    # Заменяем display math: \\[ ... \\] -> $ ... $
+    processed_text = re.sub(r'\\\[(.*?)\\\]', r'$\1$', processed_text, flags=re.DOTALL)
     
     # Заменяем inline math: \\( ... \\) -> $ ... $
-    processed_text = re.sub(r'\\\((.*?)\\\)', r'$$\1$$', processed_text, flags=re.DOTALL)
+    processed_text = re.sub(r'\\\((.*?)\\\)', r'$\1$', processed_text, flags=re.DOTALL)
+
+    processed_text = re.sub(r'\$\$', r'$', processed_text, flags=re.DOTALL)
 
     return processed_text
 
@@ -77,8 +79,8 @@ async def process_chunk(chunk_text, toc_text: str):
         # Асинхронный вызов OpenAI API
         response = await client.chat.completions.create(
             model=OPENAI_MODEL,
-            temperature=OPENAI_TEMPERATURE,
-            top_p=OPENAI_TOP_P,
+            #temperature=OPENAI_TEMPERATURE,
+            #top_p=OPENAI_TOP_P,
             frequency_penalty=OPENAI_FREQUENCY_PENALTY,
             presence_penalty=OPENAI_PRESENCE_PENALTY,
             messages=[
@@ -122,6 +124,10 @@ async def process_jsonl_chunks(chunks: list[str], output_jsonl_path: str, toc_te
     # Выполняем все задачи параллельно
     chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
     
+    # Ensure output directory exists
+    out_dir = os.path.dirname(output_jsonl_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     # Асинхронно записываем результаты в файл
     async with aiofiles.open(output_jsonl_path, "w", encoding="utf-8") as outfile:
         for (chunk_idx, chunk_text), tagged_result in zip(selected_chunks, chunk_results):
