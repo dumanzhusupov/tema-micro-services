@@ -1,0 +1,26 @@
+# OpenAI API
+openai>=1.0.0
+
+# Работа с токенами
+tiktoken
+
+# Асинхронная работа с файлами
+aiofiles
+
+# Переменные окружения
+python-dotenv
+
+# HTTP клиенты
+httpx
+requests
+
+# Mathpix OCR API
+mpxpy
+
+# Работа с PDF (опционально для локального парсинга)
+# PyPDF2
+# pdf2image
+
+# Flask
+flask==2.3.3
+flask-cors==4.0.0
