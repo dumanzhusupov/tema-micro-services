@@ -23,7 +23,8 @@ from . import generator
 
 async def process_book(
     input_file: str,
-    output_dir: str = "data/retrieved_jsonl",
+    output_dir: str,
+    toc : str,
     max_tasks_to_generate: Optional[int] = None,
     start_chunk: int = 0,
     end_chunk: Optional[int] = None
@@ -70,13 +71,12 @@ async def process_book(
     
     # Этап 1: Chunking
     logging.info("[ЭТАП 1/3] Chunking - разбивка на чанки и извлечение оглавления")
-    chunks, toc = await chunking.process_file(input_file)
+    chunks = await chunking.process_file(input_file)
     
     # Сохраняем результаты chunking
     chunks_data = {
         "source_file": input_file,
         "total_chunks": len(chunks),
-        "toc": toc,
         "chunks": chunks
     }
     with open(chunks_file, 'w', encoding='utf-8') as f:

@@ -150,7 +150,12 @@
             </h1>
             <div class="d-flex align-items-center">
                 <button id="debugToggle" class="debug-toggle me-3">Показать исходный текст</button>
-                <select id="fileSelect" class="form-select me-3" style="width: auto;"></select>
+                <select id="folderSelect" class="form-select me-2" style="width: auto;">
+                    <option value="">-- Выберите папку --</option>
+                </select>
+                <select id="fileSelect" class="form-select me-3" style="width: auto;">
+                    <option value="">-- Выберите файл --</option>
+                </select>
                 <input type="text" id="searchBox" class="form-control me-3" placeholder="Поиск по тексту..." style="width: 250px;">
                 <button id="resetFilters" class="btn btn-outline-secondary">Сброс</button>
             </div>
@@ -197,6 +202,7 @@
         const API_BASE_URL = 'http://localhost:5001';
 
         // --- Элементы DOM ---
+        const folderSelect = document.getElementById('folderSelect');
         const fileSelect = document.getElementById('fileSelect');
         const tasksContainer = document.getElementById('tasksContainer');
         const topicFilter = document.getElementById('topicFilter');
@@ -264,11 +270,44 @@
             loadingIndicator.style.display = show ? 'block' : 'none';
         }
 
-        // Загрузка списка файлов
-        async function loadFileList() {
+        // Загрузка списка папок
+        async function loadFolderList() {
             toggleLoading(true);
             try {
-                const response = await fetch(`${API_BASE_URL}/api/files`);
+                const response = await fetch(`${API_BASE_URL}/api/folders`);
+                if (!response.ok) throw new Error(`HTTP ошибка! Статус: ${response.status}`);
+                const folders = await response.json();
+                
+                folderSelect.innerHTML = '<option value="">-- Выберите папку --</option>';
+                folders.forEach(folder => {
+                    const option = new Option(folder, folder);
+                    folderSelect.add(option);
+                });
+                
+                // Автоматически выбираем retrieved_jsonl если она есть
+                if (folders.includes('retrieved_jsonl')) {
+                    folderSelect.value = 'retrieved_jsonl';
+                    await loadFileList();
+                }
+            } catch (error) {
+                console.error("Ошибка при загрузке списка папок:", error);
+                folderSelect.innerHTML = '<option value="">-- Ошибка загрузки --</option>';
+            } finally {
+                toggleLoading(false);
+            }
+        }
+
+        // Загрузка списка файлов
+        async function loadFileList() {
+            const folder = folderSelect.value;
+            if (!folder) {
+                fileSelect.innerHTML = '<option value="">-- Сначала выберите папку --</option>';
+                return;
+            }
+            
+            toggleLoading(true);
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/files?folder=${folder}`);
                 if (!response.ok) throw new Error(`HTTP ошибка! Статус: ${response.status}`);
                 const files = await response.json();
                 
@@ -288,7 +327,9 @@
         // Загрузка задач из файла
         async function loadTasks() {
             const filename = fileSelect.value;
-            if (!filename) {
+            const folder = folderSelect.value;
+            
+            if (!filename || !folder) {
                 tasksContainer.innerHTML = '';
                 allTasks = [];
                 updateFilters();
@@ -297,7 +338,7 @@
             
             toggleLoading(true);
             try {
-                const response = await fetch(`${API_BASE_URL}/api/tasks?file=${filename}`);
+                const response = await fetch(`${API_BASE_URL}/api/tasks?file=${filename}&folder=${folder}`);
                 if (!response.ok) throw new Error(`HTTP ошибка! Статус: ${response.status}`);
                 const tasks = await response.json();
                 
@@ -438,7 +479,9 @@
 
         // Сброс всех фильтров
         function resetFilters() {
+            folderSelect.value = '';
             fileSelect.value = '';
+            fileSelect.innerHTML = '<option value="">-- Сначала выберите папку --</option>';
             topicFilter.value = '';
             difficultyFilter.value = '';
             typeFilter.value = '';
@@ -458,6 +501,7 @@
         }
 
         // --- Обработчики событий ---
+        folderSelect.addEventListener('change', loadFileList);
         fileSelect.addEventListener('change', loadTasks);
         topicFilter.addEventListener('change', applyFilters);
         difficultyFilter.addEventListener('change', applyFilters);
@@ -468,7 +512,7 @@
         
         // --- Инициализация ---
         document.addEventListener('DOMContentLoaded', () => {
-            loadFileList();
+            loadFolderList();
             renderStats(); // Показать пустую статистику
             
             // Настройка KaTeX автоматического рендеринга

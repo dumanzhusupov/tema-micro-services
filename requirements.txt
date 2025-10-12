@@ -1,5 +1,5 @@
 # OpenAI API
-openai>=1.0.0
+openai==2.3.0
 
 # Работа с токенами
 tiktoken

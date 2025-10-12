@@ -19,6 +19,11 @@ import config
 
 load_dotenv()
 
+if "OPENAI_API_KEY" in os.environ:
+    del os.environ["OPENAI_API_KEY"]
+
+load_dotenv()
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 
@@ -64,7 +69,9 @@ def normalize_latex(text: str) -> str:
     
     # Экранируем управляющие символы
     processed = escape_control_chars(text)
-    
+
+    processed = re.sub(r'\\\\+', r'\\', processed)
+
     # Преобразуем display math: \\[ ... \\] -> $ ... $
     processed = re.sub(r'\\\[(.*?)\\\]', r'$\1$', processed, flags=re.DOTALL)
     
@@ -202,7 +209,7 @@ async def generate_tasks_from_list(
 
 async def generate_tasks_from_jsonl(
     jsonl_path: str,
-    subject: str = "Математика",
+    subject: str,
     model: Optional[str] = None,
     seed: Optional[int] = None,
     max_tasks: Optional[int] = None

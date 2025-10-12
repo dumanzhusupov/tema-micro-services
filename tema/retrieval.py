@@ -20,6 +20,11 @@ import config
 
 load_dotenv()
 
+if "OPENAI_API_KEY" in os.environ:
+    del os.environ["OPENAI_API_KEY"]
+
+load_dotenv()
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 
@@ -66,6 +71,8 @@ def normalize_latex(text: str) -> str:
     # Экранируем управляющие символы
     processed = escape_control_chars(text)
     
+    processed = re.sub(r'\\\\+', r'\\', processed)
+    
     # Преобразуем display math: \\[ ... \\] -> $ ... $
     processed = re.sub(r'\\\[(.*?)\\\]', r'$\1$', processed, flags=re.DOTALL)
     
@@ -94,7 +101,7 @@ def _clean_gpt_output(raw: str) -> str:
     return raw
 
 
-async def process_chunk(chunk_text: str, toc_text: Optional[str] = None) -> Optional[str]:
+async def process_chunk(chunk_text: str, toc_text: str) -> Optional[str]:
     """
     Обрабатывает один текстовый чанк через OpenAI API для извлечения задач.
     
@@ -113,7 +120,7 @@ async def process_chunk(chunk_text: str, toc_text: Optional[str] = None) -> Opti
     # Формируем system prompt с учетом оглавления
     system_prompt = config.RETRIEVAL_SYSTEM_PROMPT
     if toc_text:
-        system_prompt = system_prompt + f"\nВот список тем учебника (оглавление):\n{toc_text}\n\n"
+        system_prompt += f"\nВот список тем учебника (оглавление):\n{toc_text}\n\n"
     
     try:
         response = await client.chat.completions.create(
